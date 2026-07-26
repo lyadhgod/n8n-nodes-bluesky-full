@@ -10,6 +10,13 @@ import type {
 
 import { CREDENTIAL_NAME, DEFAULT_PDS_SERVER, DOCS_URL, NSID } from '../constants';
 
+/** Reads the `exp` claim (ms) out of a JWT without verifying its signature */
+function decodeJwtExpiry(jwt: string): number {
+	const payload = jwt.split('.')[1] ?? '';
+	const json = Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+	return JSON.parse(json).exp * 1000;
+}
+
 /**
  * AT Protocol app-password credential. There is no OAuth flow here: the user
  * supplies their PDS URL plus an identifier/app-password pair, and
@@ -60,32 +67,54 @@ export class BlueskyApi implements ICredentialType {
 	// re-runs this on a 401, at which point the long-lived refresh token is used instead
 	// of the app password to avoid createSession's stricter rate limit.
 	async preAuthentication(this: IHttpRequestHelper, credentials: ICredentialDataDecryptedObject) {
-		if (credentials.refreshJwt) {
+		const pdsServer = String(credentials.pdsServer).replace(/\/+$/, '');
+		const identifier = String(credentials.identifier).replace(/\s+/g, '');
+		const password = String(credentials.password).replace(/\s+/g, '');
+		const refreshJwt = String(credentials.refreshJwt).replace(/\s+/g, '');
+		const accessJwt = String(credentials.accessJwt).replace(/\s+/g, '');
+
+		const now = Date.now();
+		let accessExpiry = 0;
+		try {
+			accessExpiry = decodeJwtExpiry(accessJwt);
+		} catch {
+			// Defaulting to start of time
+		}
+		let refreshExpiry = 0;
+		try {
+			refreshExpiry = decodeJwtExpiry(refreshJwt);
+		} catch {
+			// Defaulting to start of time
+		}
+
+		// Access jwt is still valid
+		if (now < accessExpiry) {
+			return { accessJwt, refreshJwt };
+		}
+		
+		if (now < refreshExpiry) {
 			try {
-				const { accessJwt, refreshJwt } = (await this.helpers.httpRequest({
+				const { accessJwt, refreshJwt: newRefreshJwt } = (await this.helpers.httpRequest({
 					method: 'POST',
-					url: `${credentials.pdsServer}/xrpc/${NSID.server.refreshSession}`,
-					headers: { Authorization: `Bearer ${credentials.refreshJwt}` },
+					url: `${pdsServer}/xrpc/${NSID.server.refreshSession}`,
+					headers: { Authorization: `Bearer ${refreshJwt}` },
 					json: true,
 				})) as { accessJwt: string; refreshJwt: string };
 
-				return { accessJwt, refreshJwt };
+				return { accessJwt, refreshJwt: newRefreshJwt };
 			} catch {
 				// Refresh token expired or revoked; fall back to a fresh login below.
 			}
 		}
 
-		const { accessJwt, refreshJwt } = (await this.helpers.httpRequest({
+		const { accessJwt: newAccessJwt, refreshJwt: newRefreshJwt } = (await this.helpers.httpRequest({
 			method: 'POST',
-			url: `${credentials.pdsServer}/xrpc/${NSID.server.createSession}`,
-			body: {
-				identifier: credentials.identifier,
-				password: credentials.password,
-			},
+			url: `${pdsServer}/xrpc/${NSID.server.createSession}`,
+			body: { identifier, password },
 			json: true,
 		})) as { accessJwt: string; refreshJwt: string };
 
-		return { accessJwt, refreshJwt };
+		return { accessJwt: newAccessJwt, refreshJwt: newRefreshJwt };
 	}
 
 	/** Attaches the session JWT `preAuthentication` produced/cached to every outgoing request */
@@ -93,7 +122,7 @@ export class BlueskyApi implements ICredentialType {
 		type: 'generic',
 		properties: {
 			headers: {
-				Authorization: '=Bearer {{$credentials.accessJwt}}',
+				Authorization: '=Bearer {{ String($credentials.accessJwt).replace(/\\s+/g, "") }}',
 			},
 		},
 	};
@@ -101,12 +130,12 @@ export class BlueskyApi implements ICredentialType {
 	/** Powers the "Test" button in the credential UI: a raw login attempt, bypassing preAuthentication's caching */
 	test: ICredentialTestRequest = {
 		request: {
-			baseURL: '={{$credentials.pdsServer}}',
+			baseURL: '={{ String($credentials.pdsServer).replace(/\\/+$/, "") }}',
 			url: `/xrpc/${NSID.server.createSession}`,
 			method: 'POST',
 			body: {
-				identifier: '={{$credentials.identifier}}',
-				password: '={{$credentials.password}}',
+				identifier: '={{ String($credentials.identifier).replace(/\\s+/g, "") }}',
+				password: '={{ String($credentials.password).replace(/\\s+/g, "") }}',
 			},
 		},
 	};
