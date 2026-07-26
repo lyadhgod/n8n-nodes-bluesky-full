@@ -13,25 +13,34 @@ import {
 
 import { CREDENTIAL_NAME, NODE_DISPLAY_NAME, NODE_NAME, NSID } from '../../constants';
 import {
+	asArray,
+	asBoolean,
+	asNumber,
+	asObject,
+	asString,
+	asStringArray,
+	splitList,
+} from '../../sanitize';
+import {
+	booleanParam,
 	getPostView,
 	normalizeActor,
+	objectParam,
+	paginationParams,
 	parseAtUri,
+	requiredParam,
 	resolveDid,
 	resolvePostUri,
 	simplifyPost,
 	simplifyProfile,
+	stringParam,
 } from './helpers';
 import { detectFacets, toFacet, type Facet } from './richtext';
 import { feedDescription } from './resources/feed';
 import { notificationDescription } from './resources/notification';
 import { postDescription } from './resources/post';
 import { userDescription } from './resources/user';
-import {
-	blueskyApiRequest,
-	blueskyApiRequestAllItems,
-	getOwnDid,
-	uploadBlob,
-} from './transport';
+import { blueskyApiRequest, blueskyApiRequestAllItems, getOwnDid, uploadBlob } from './transport';
 
 /**
  * Blob ceilings come from the lexicon that *references* the blob, not from
@@ -43,23 +52,41 @@ import {
 const MAX_IMAGE_BYTES = 2_000_000;
 const MAX_THUMBNAIL_BYTES = 1_000_000;
 
-/** One entry of the `images.image` fixedCollection parameter on the Create Post operation */
+/** One image of the `images.image` fixedCollection, after checking what the parameter actually held */
 interface ImageInput {
 	/** Name of the input binary field holding the image data */
 	binaryPropertyName: string;
 	/** Alt text for screen readers; Bluesky allows an empty string but not omitting it */
-	alt?: string;
+	alt: string;
 }
 
 /** The DID resolver memoized once per execution in {@link Bluesky.execute}, threaded into every operation that writes a record */
 type RepoResolver = () => Promise<string>;
 
-/** Parse a comma-separated node parameter (e.g. Languages, Tags) into a trimmed, non-empty list */
-function splitList(value: unknown): string[] {
-	return String(value ?? '')
-		.split(',')
-		.map((entry) => entry.trim())
-		.filter((entry) => entry.length > 0);
+/**
+ * Read the Images fixedCollection into validated entries. Each row's binary field
+ * name is user-supplied and is what `assertBinaryData` is keyed on, so a blank one
+ * is rejected here instead of surfacing as a confusing "no binary data" error.
+ */
+function readImageInputs(
+	context: IExecuteFunctions,
+	itemIndex: number,
+	raw: unknown,
+): ImageInput[] {
+	return asArray<unknown>(raw).map((entry, index) => {
+		const image = asObject(entry);
+		const binaryPropertyName = asString(image.binaryPropertyName).trim();
+
+		if (!binaryPropertyName) {
+			throw new NodeOperationError(
+				context.getNode(),
+				`Image ${index + 1} has no input binary field name`,
+				{ itemIndex, description: 'Name the binary field holding the image, e.g. "data"' },
+			);
+		}
+
+		return { binaryPropertyName, alt: asString(image.alt) };
+	});
 }
 
 /** Turn links, @mentions and #hashtags in the text into AT Protocol facets */
@@ -110,10 +137,29 @@ async function uploadBinaryImage(
 	return await uploadBlob.call(this, buffer, binary.mimeType || 'application/octet-stream');
 }
 
+/**
+ * A `resource`/`operation` pair the node has no handler for. Reachable when a
+ * workflow was built against a newer version of this node, or hand-edited: the
+ * dispatchers used to fall through to an empty object, which looked like a
+ * successful run that quietly did nothing.
+ */
+function unknownOperation(
+	context: IExecuteFunctions,
+	resource: string,
+	operation: string,
+	itemIndex: number,
+): NodeOperationError {
+	return new NodeOperationError(
+		context.getNode(),
+		`The operation "${operation}" is not supported for the ${resource} resource`,
+		{ itemIndex },
+	);
+}
+
 /** Delete a record referenced by an AT URI, e.g. the like the viewer left on a post */
 async function deleteRecordByUri(
 	this: IExecuteFunctions,
-	uri: string,
+	uri: unknown,
 	itemIndex: number,
 ): Promise<void> {
 	const { repo, collection, rkey } = parseAtUri(this, uri, itemIndex);
@@ -133,9 +179,13 @@ async function createPost(
 	itemIndex: number,
 	repo: RepoResolver,
 ): Promise<IDataObject> {
-	const text = this.getNodeParameter('text', itemIndex) as string;
-	const images = this.getNodeParameter('images.image', itemIndex, []) as ImageInput[];
-	const options = this.getNodeParameter('additionalFields', itemIndex, {}) as IDataObject;
+	const text = asString(this.getNodeParameter('text', itemIndex, ''));
+	const options = objectParam(this, 'additionalFields', itemIndex);
+	const images = readImageInputs(
+		this,
+		itemIndex,
+		this.getNodeParameter('images.image', itemIndex, []),
+	);
 
 	const record: IDataObject = {
 		$type: NSID.feed.post,
@@ -143,15 +193,18 @@ async function createPost(
 		createdAt: new Date().toISOString(),
 	};
 
-	if (options.detectFacets !== false) {
+	if (asBoolean(options.detectFacets, true)) {
 		const facets = await buildFacets.call(this, text);
 		if (facets.length) record.facets = facets;
 	}
 
-	if (options.langs) record.langs = splitList(options.langs).slice(0, 3);
-	if (options.tags) record.tags = splitList(options.tags).slice(0, 8);
+	const langs = splitList(options.langs).slice(0, 3);
+	if (langs.length) record.langs = langs;
 
-	const labels = (options.labels ?? []) as string[];
+	const tags = splitList(options.tags).slice(0, 8);
+	if (tags.length) record.tags = tags;
+
+	const labels = asStringArray(options.labels);
 	if (labels.length) {
 		record.labels = {
 			$type: NSID.label.selfLabels,
@@ -159,13 +212,16 @@ async function createPost(
 		};
 	}
 
-	if (options.replyUri) {
-		const parentUri = await resolvePostUri.call(this, options.replyUri as string);
-		const parent = await getPostView.call(this, parentUri);
+	const replyUri = asString(options.replyUri).trim();
+	if (replyUri) {
+		const parent = await getPostView.call(this, await resolvePostUri.call(this, replyUri));
 		const parentRef = { uri: parent.uri, cid: parent.cid };
-		const parentReply = (parent.record as IDataObject)?.reply as IDataObject | undefined;
+		const parentReply = asObject(asObject(parent.record).reply);
 
-		record.reply = { root: parentReply?.root ?? parentRef, parent: parentRef };
+		record.reply = {
+			root: asObject(parentReply.root).uri ? parentReply.root : parentRef,
+			parent: parentRef,
+		};
 	}
 
 	let media: IDataObject | undefined;
@@ -185,7 +241,7 @@ async function createPost(
 			$type: NSID.embed.images,
 			images: await Promise.all(
 				images.map(async (image) => ({
-					alt: image.alt ?? '',
+					alt: image.alt,
 					image: await uploadBinaryImage.call(
 						this,
 						itemIndex,
@@ -195,18 +251,19 @@ async function createPost(
 				})),
 			),
 		};
-	} else if (options.externalUri) {
+	} else if (asString(options.externalUri).trim()) {
 		const external: IDataObject = {
-			uri: options.externalUri,
-			title: options.externalTitle ?? '',
-			description: options.externalDescription ?? '',
+			uri: asString(options.externalUri).trim(),
+			title: asString(options.externalTitle),
+			description: asString(options.externalDescription),
 		};
 
-		if (options.externalThumbnail) {
+		const thumbnailField = asString(options.externalThumbnail).trim();
+		if (thumbnailField) {
 			external.thumb = await uploadBinaryImage.call(
 				this,
 				itemIndex,
-				options.externalThumbnail as string,
+				thumbnailField,
 				MAX_THUMBNAIL_BYTES,
 			);
 		}
@@ -215,11 +272,9 @@ async function createPost(
 	}
 
 	let quoteRef: IDataObject | undefined;
-	if (options.quoteUri) {
-		const quoted = await getPostView.call(
-			this,
-			await resolvePostUri.call(this, options.quoteUri as string),
-		);
+	const quoteUri = asString(options.quoteUri).trim();
+	if (quoteUri) {
+		const quoted = await getPostView.call(this, await resolvePostUri.call(this, quoteUri));
 		quoteRef = { uri: quoted.uri, cid: quoted.cid };
 	}
 
@@ -245,21 +300,25 @@ async function createPost(
 }
 
 async function deletePost(this: IExecuteFunctions, itemIndex: number): Promise<IDataObject> {
-	const uri = await resolvePostUri.call(this, this.getNodeParameter('uri', itemIndex) as string);
+	const uri = await resolvePostUri.call(this, requiredParam(this, 'uri', itemIndex, 'Post'));
 	await deleteRecordByUri.call(this, uri, itemIndex);
 	return { success: true, uri };
 }
 
 async function getPost(this: IExecuteFunctions, itemIndex: number): Promise<IDataObject> {
-	const uri = await resolvePostUri.call(this, this.getNodeParameter('uri', itemIndex) as string);
+	const uri = await resolvePostUri.call(this, requiredParam(this, 'uri', itemIndex, 'Post'));
 	const post = await getPostView.call(this, uri);
-	const simplify = this.getNodeParameter('simplify', itemIndex, false) as boolean;
-	return simplify ? simplifyPost(post) : post;
+	return booleanParam(this, 'simplify', itemIndex) ? simplifyPost(post) : post;
 }
 
 async function getPostThreadOp(this: IExecuteFunctions, itemIndex: number): Promise<IDataObject> {
-	const uri = await resolvePostUri.call(this, this.getNodeParameter('uri', itemIndex) as string);
-	const options = this.getNodeParameter('options', itemIndex, {}) as IDataObject;
+	const uri = await resolvePostUri.call(this, requiredParam(this, 'uri', itemIndex, 'Post'));
+	const options = objectParam(this, 'options', itemIndex);
+
+	// Both are clamped to the range app.bsky.feed.getPostThread accepts, so an
+	// out-of-range expression result is corrected rather than rejected by the API
+	const clamp = (value: unknown, fallback: number) =>
+		Math.min(1000, Math.max(0, Math.floor(asNumber(value, fallback))));
 
 	const response = await blueskyApiRequest.call(
 		this,
@@ -268,21 +327,20 @@ async function getPostThreadOp(this: IExecuteFunctions, itemIndex: number): Prom
 		{},
 		{
 			uri,
-			depth: options.depth ?? 6,
-			parentHeight: options.parentHeight ?? 80,
+			depth: clamp(options.depth, 6),
+			parentHeight: clamp(options.parentHeight, 80),
 		},
 	);
-	return response.thread as IDataObject;
+	return asObject(response.thread);
 }
 
 async function searchPosts(this: IExecuteFunctions, itemIndex: number): Promise<IDataObject[]> {
-	const filters = this.getNodeParameter('filters', itemIndex, {}) as IDataObject;
-	const qs: IDataObject = { q: this.getNodeParameter('query', itemIndex) as string, ...filters };
-	if (filters.author) qs.author = normalizeActor(filters.author as string);
-	if (filters.mentions) qs.mentions = normalizeActor(filters.mentions as string);
+	const filters = objectParam(this, 'filters', itemIndex);
+	const qs: IDataObject = { q: requiredParam(this, 'query', itemIndex, 'Query'), ...filters };
+	if (filters.author) qs.author = normalizeActor(filters.author);
+	if (filters.mentions) qs.mentions = normalizeActor(filters.mentions);
 
-	const returnAll = this.getNodeParameter('returnAll', itemIndex, false) as boolean;
-	const limit = this.getNodeParameter('limit', itemIndex, 50) as number;
+	const { returnAll, limit } = paginationParams(this, itemIndex);
 	const posts = await blueskyApiRequestAllItems.call(
 		this,
 		NSID.feed.searchPosts,
@@ -292,8 +350,7 @@ async function searchPosts(this: IExecuteFunctions, itemIndex: number): Promise<
 		limit,
 	);
 
-	const simplify = this.getNodeParameter('simplify', itemIndex, false) as boolean;
-	return simplify ? posts.map(simplifyPost) : posts;
+	return booleanParam(this, 'simplify', itemIndex) ? posts.map(simplifyPost) : posts;
 }
 
 async function likeOrRepostPost(
@@ -302,7 +359,7 @@ async function likeOrRepostPost(
 	itemIndex: number,
 	repo: RepoResolver,
 ): Promise<IDataObject> {
-	const uri = await resolvePostUri.call(this, this.getNodeParameter('uri', itemIndex) as string);
+	const uri = await resolvePostUri.call(this, requiredParam(this, 'uri', itemIndex, 'Post'));
 	const post = await getPostView.call(this, uri);
 	const collection = operation === 'like' ? NSID.feed.like : NSID.feed.repost;
 
@@ -325,19 +382,18 @@ async function unlikeOrUnrepostPost(
 	// The post view's `viewer` block carries the AT URI of *this account's own*
 	// like/repost record, if any; that's what has to be deleted, not the post itself.
 	// Its absence means there was nothing to undo, so this operation is idempotent.
-	const uri = await resolvePostUri.call(this, this.getNodeParameter('uri', itemIndex) as string);
+	const uri = await resolvePostUri.call(this, requiredParam(this, 'uri', itemIndex, 'Post'));
 	const post = await getPostView.call(this, uri);
-	const viewer = (post.viewer ?? {}) as IDataObject;
-	const recordUri = (operation === 'unlike' ? viewer.like : viewer.repost) as string | undefined;
+	const viewer = asObject(post.viewer);
+	const recordUri = asString(operation === 'unlike' ? viewer.like : viewer.repost);
 
 	if (recordUri) await deleteRecordByUri.call(this, recordUri, itemIndex);
 	return { success: true, uri, changed: Boolean(recordUri) };
 }
 
 async function getPostLikes(this: IExecuteFunctions, itemIndex: number): Promise<IDataObject[]> {
-	const uri = await resolvePostUri.call(this, this.getNodeParameter('uri', itemIndex) as string);
-	const returnAll = this.getNodeParameter('returnAll', itemIndex, false) as boolean;
-	const limit = this.getNodeParameter('limit', itemIndex, 50) as number;
+	const uri = await resolvePostUri.call(this, requiredParam(this, 'uri', itemIndex, 'Post'));
+	const { returnAll, limit } = paginationParams(this, itemIndex);
 	const likes = await blueskyApiRequestAllItems.call(
 		this,
 		NSID.feed.getLikes,
@@ -347,19 +403,17 @@ async function getPostLikes(this: IExecuteFunctions, itemIndex: number): Promise
 		limit,
 	);
 
-	const simplify = this.getNodeParameter('simplify', itemIndex, false) as boolean;
-	return simplify
+	return booleanParam(this, 'simplify', itemIndex)
 		? likes.map((like) => ({
-				...simplifyProfile((like.actor ?? {}) as IDataObject),
+				...simplifyProfile(like.actor),
 				likedAt: like.createdAt,
 			}))
 		: likes;
 }
 
 async function getPostReposts(this: IExecuteFunctions, itemIndex: number): Promise<IDataObject[]> {
-	const uri = await resolvePostUri.call(this, this.getNodeParameter('uri', itemIndex) as string);
-	const returnAll = this.getNodeParameter('returnAll', itemIndex, false) as boolean;
-	const limit = this.getNodeParameter('limit', itemIndex, 50) as number;
+	const uri = await resolvePostUri.call(this, requiredParam(this, 'uri', itemIndex, 'Post'));
+	const { returnAll, limit } = paginationParams(this, itemIndex);
 	const profiles = await blueskyApiRequestAllItems.call(
 		this,
 		NSID.feed.getRepostedBy,
@@ -369,8 +423,7 @@ async function getPostReposts(this: IExecuteFunctions, itemIndex: number): Promi
 		limit,
 	);
 
-	const simplify = this.getNodeParameter('simplify', itemIndex, false) as boolean;
-	return simplify ? profiles.map(simplifyProfile) : profiles;
+	return booleanParam(this, 'simplify', itemIndex) ? profiles.map(simplifyProfile) : profiles;
 }
 
 /** Dispatches a Post-resource operation to its handler */
@@ -402,7 +455,7 @@ async function executePostOperation(
 		case 'getReposts':
 			return getPostReposts.call(this, itemIndex);
 		default:
-			return {};
+			throw unknownOperation(this, 'post', operation, itemIndex);
 	}
 }
 
@@ -417,12 +470,10 @@ async function fetchFeed(
 	nsid: string,
 	qs: IDataObject,
 ): Promise<IDataObject[]> {
-	const returnAll = this.getNodeParameter('returnAll', itemIndex, false) as boolean;
-	const limit = this.getNodeParameter('limit', itemIndex, 50) as number;
+	const { returnAll, limit } = paginationParams(this, itemIndex);
 	const feed = await blueskyApiRequestAllItems.call(this, nsid, 'feed', qs, returnAll, limit);
 
-	const simplify = this.getNodeParameter('simplify', itemIndex, false) as boolean;
-	return simplify ? feed.map(simplifyPost) : feed;
+	return booleanParam(this, 'simplify', itemIndex) ? feed.map(simplifyPost) : feed;
 }
 
 async function getTimelineOp(this: IExecuteFunctions, itemIndex: number): Promise<IDataObject[]> {
@@ -431,14 +482,14 @@ async function getTimelineOp(this: IExecuteFunctions, itemIndex: number): Promis
 
 async function getAuthorFeedOp(this: IExecuteFunctions, itemIndex: number): Promise<IDataObject[]> {
 	const qs: IDataObject = {
-		actor: normalizeActor(this.getNodeParameter('actor', itemIndex) as string),
-		...(this.getNodeParameter('options', itemIndex, {}) as IDataObject),
+		actor: normalizeActor(requiredParam(this, 'actor', itemIndex, 'Account')),
+		...objectParam(this, 'options', itemIndex),
 	};
 	return fetchFeed.call(this, itemIndex, NSID.feed.getAuthorFeed, qs);
 }
 
 async function getCustomFeedOp(this: IExecuteFunctions, itemIndex: number): Promise<IDataObject[]> {
-	const qs: IDataObject = { feed: this.getNodeParameter('feedUri', itemIndex) as string };
+	const qs: IDataObject = { feed: requiredParam(this, 'feedUri', itemIndex, 'Feed') };
 	return fetchFeed.call(this, itemIndex, NSID.feed.getFeed, qs);
 }
 
@@ -454,8 +505,9 @@ async function executeFeedOperation(
 		case 'getFeed':
 			return getCustomFeedOp.call(this, itemIndex);
 		case 'getTimeline':
-		default:
 			return getTimelineOp.call(this, itemIndex);
+		default:
+			throw unknownOperation(this, 'feed', operation, itemIndex);
 	}
 }
 
@@ -469,25 +521,22 @@ async function getUserProfile(this: IExecuteFunctions, itemIndex: number): Promi
 		'GET',
 		NSID.actor.getProfile,
 		{},
-		{ actor: normalizeActor(this.getNodeParameter('actor', itemIndex) as string) },
+		{ actor: normalizeActor(requiredParam(this, 'actor', itemIndex, 'Account')) },
 	);
-	const simplify = this.getNodeParameter('simplify', itemIndex, false) as boolean;
-	return simplify ? simplifyProfile(profile) : profile;
+	return booleanParam(this, 'simplify', itemIndex) ? simplifyProfile(profile) : profile;
 }
 
 async function searchUsers(this: IExecuteFunctions, itemIndex: number): Promise<IDataObject[]> {
-	const returnAll = this.getNodeParameter('returnAll', itemIndex, false) as boolean;
-	const limit = this.getNodeParameter('limit', itemIndex, 50) as number;
+	const { returnAll, limit } = paginationParams(this, itemIndex);
 	const actors = await blueskyApiRequestAllItems.call(
 		this,
 		NSID.actor.searchActors,
 		'actors',
-		{ q: this.getNodeParameter('query', itemIndex) as string },
+		{ q: requiredParam(this, 'query', itemIndex, 'Query') },
 		returnAll,
 		limit,
 	);
-	const simplify = this.getNodeParameter('simplify', itemIndex, false) as boolean;
-	return simplify ? actors.map(simplifyProfile) : actors;
+	return booleanParam(this, 'simplify', itemIndex) ? actors.map(simplifyProfile) : actors;
 }
 
 async function getFollowersOrFollowing(
@@ -496,18 +545,16 @@ async function getFollowersOrFollowing(
 	itemIndex: number,
 ): Promise<IDataObject[]> {
 	const isFollowers = operation === 'getFollowers';
-	const returnAll = this.getNodeParameter('returnAll', itemIndex, false) as boolean;
-	const limit = this.getNodeParameter('limit', itemIndex, 50) as number;
+	const { returnAll, limit } = paginationParams(this, itemIndex);
 	const profiles = await blueskyApiRequestAllItems.call(
 		this,
 		isFollowers ? NSID.graph.getFollowers : NSID.graph.getFollows,
 		isFollowers ? 'followers' : 'follows',
-		{ actor: normalizeActor(this.getNodeParameter('actor', itemIndex) as string) },
+		{ actor: normalizeActor(requiredParam(this, 'actor', itemIndex, 'Account')) },
 		returnAll,
 		limit,
 	);
-	const simplify = this.getNodeParameter('simplify', itemIndex, false) as boolean;
-	return simplify ? profiles.map(simplifyProfile) : profiles;
+	return booleanParam(this, 'simplify', itemIndex) ? profiles.map(simplifyProfile) : profiles;
 }
 
 async function followOrBlock(
@@ -516,7 +563,7 @@ async function followOrBlock(
 	itemIndex: number,
 	repo: RepoResolver,
 ): Promise<IDataObject> {
-	const did = await resolveDid.call(this, this.getNodeParameter('actor', itemIndex) as string);
+	const did = await resolveDid.call(this, requiredParam(this, 'actor', itemIndex, 'Account'));
 	const collection = operation === 'follow' ? NSID.graph.follow : NSID.graph.block;
 
 	return await blueskyApiRequest.call(this, 'POST', NSID.repo.createRecord, {
@@ -531,14 +578,12 @@ async function unfollowOrUnblock(
 	operation: 'unfollow' | 'unblock',
 	itemIndex: number,
 ): Promise<IDataObject> {
-	const actor = normalizeActor(this.getNodeParameter('actor', itemIndex) as string);
+	const actor = normalizeActor(requiredParam(this, 'actor', itemIndex, 'Account'));
 	const profile = await blueskyApiRequest.call(this, 'GET', NSID.actor.getProfile, {}, { actor });
 	// Same idempotent-delete pattern as unlike/unrepost above, but keyed off the
 	// profile viewer's `following`/`blocking` record URI instead of a post's.
-	const viewer = (profile.viewer ?? {}) as IDataObject;
-	const recordUri = (operation === 'unfollow' ? viewer.following : viewer.blocking) as
-		| string
-		| undefined;
+	const viewer = asObject(profile.viewer);
+	const recordUri = asString(operation === 'unfollow' ? viewer.following : viewer.blocking);
 
 	if (recordUri) await deleteRecordByUri.call(this, recordUri, itemIndex);
 	return { success: true, actor, changed: Boolean(recordUri) };
@@ -549,7 +594,7 @@ async function muteOrUnmute(
 	operation: 'mute' | 'unmute',
 	itemIndex: number,
 ): Promise<IDataObject> {
-	const actor = normalizeActor(this.getNodeParameter('actor', itemIndex) as string);
+	const actor = normalizeActor(requiredParam(this, 'actor', itemIndex, 'Account'));
 	const nsid = operation === 'mute' ? NSID.graph.muteActor : NSID.graph.unmuteActor;
 	await blueskyApiRequest.call(this, 'POST', nsid, { actor });
 	return { success: true, actor };
@@ -580,7 +625,7 @@ async function executeUserOperation(
 		case 'unmute':
 			return muteOrUnmute.call(this, operation, itemIndex);
 		default:
-			return {};
+			throw unknownOperation(this, 'user', operation, itemIndex);
 	}
 }
 
@@ -592,11 +637,10 @@ async function getAllNotifications(
 	this: IExecuteFunctions,
 	itemIndex: number,
 ): Promise<IDataObject[]> {
-	const filters = this.getNodeParameter('filters', itemIndex, {}) as IDataObject;
-	const reasons = (filters.reasons ?? []) as string[];
+	const filters = objectParam(this, 'filters', itemIndex);
+	const reasons = asStringArray(filters.reasons);
 
-	const returnAll = this.getNodeParameter('returnAll', itemIndex, false) as boolean;
-	const limit = this.getNodeParameter('limit', itemIndex, 50) as number;
+	const { returnAll, limit } = paginationParams(this, itemIndex);
 	let notifications = await blueskyApiRequestAllItems.call(
 		this,
 		NSID.notification.listNotifications,
@@ -606,28 +650,27 @@ async function getAllNotifications(
 		limit,
 	);
 
-	if (filters.onlyUnread) {
-		notifications = notifications.filter((entry) => !entry.isRead);
+	if (asBoolean(filters.onlyUnread)) {
+		notifications = notifications.filter((entry) => !asBoolean(entry.isRead));
 	}
 
-	const simplify = this.getNodeParameter('simplify', itemIndex, false) as boolean;
-	return simplify
+	return booleanParam(this, 'simplify', itemIndex)
 		? notifications.map((entry) => {
-				const author = (entry.author ?? {}) as IDataObject;
-				const record = (entry.record ?? {}) as IDataObject;
+				const author = asObject(entry.author);
+				const record = asObject(entry.record);
 
 				return {
-					uri: entry.uri,
-					cid: entry.cid,
-					reason: entry.reason,
-					reasonSubject: entry.reasonSubject,
-					isRead: entry.isRead,
+					uri: asString(entry.uri),
+					cid: asString(entry.cid),
+					reason: asString(entry.reason),
+					reasonSubject: asString(entry.reasonSubject),
+					isRead: asBoolean(entry.isRead),
 					indexedAt: entry.indexedAt,
-					text: record.text,
+					text: asString(record.text),
 					author: {
-						did: author.did,
-						handle: author.handle,
-						displayName: author.displayName,
+						did: asString(author.did),
+						handle: asString(author.handle),
+						displayName: asString(author.displayName),
 					},
 				};
 			})
@@ -642,11 +685,20 @@ async function markNotificationsRead(
 	this: IExecuteFunctions,
 	itemIndex: number,
 ): Promise<IDataObject> {
-	const seenAt =
-		(this.getNodeParameter('seenAt', itemIndex, '') as string) || new Date().toISOString();
-	await blueskyApiRequest.call(this, 'POST', NSID.notification.updateSeen, {
-		seenAt: new Date(seenAt).toISOString(),
-	});
+	const input = stringParam(this, 'seenAt', itemIndex);
+	const parsed = input ? new Date(input) : new Date();
+
+	// `toISOString()` throws a raw RangeError on an unparseable date, which would
+	// surface as an opaque node crash rather than a fixable parameter problem
+	if (Number.isNaN(parsed.getTime())) {
+		throw new NodeOperationError(this.getNode(), `"${input}" is not a valid date`, {
+			itemIndex,
+			description: 'Leave "Seen At" empty to mark everything up to now as read',
+		});
+	}
+
+	const seenAt = parsed.toISOString();
+	await blueskyApiRequest.call(this, 'POST', NSID.notification.updateSeen, { seenAt });
 	return { success: true, seenAt };
 }
 
@@ -664,7 +716,7 @@ async function executeNotificationOperation(
 		case 'markRead':
 			return markNotificationsRead.call(this, itemIndex);
 		default:
-			return {};
+			throw unknownOperation(this, 'notification', operation, itemIndex);
 	}
 }
 
@@ -726,8 +778,8 @@ export class Bluesky implements INodeType {
 		const items = this.getInputData();
 		const returnData: INodeExecutionData[] = [];
 
-		const resource = this.getNodeParameter('resource', 0) as string;
-		const operation = this.getNodeParameter('operation', 0) as string;
+		const resource = asString(this.getNodeParameter('resource', 0, ''));
+		const operation = asString(this.getNodeParameter('operation', 0, ''));
 
 		// Record writes need the DID of the authenticated account, fetched at most once
 		// per execution (not per item) since `repo` is always the same for all items.
@@ -752,19 +804,22 @@ export class Bluesky implements INodeType {
 						responseData = await executeNotificationOperation.call(this, operation, i);
 						break;
 					default:
-						responseData = {};
+						throw new NodeOperationError(
+							this.getNode(),
+							`The resource "${resource}" is not supported`,
+							{ itemIndex: i },
+						);
 				}
 
 				returnData.push(
-					...this.helpers.constructExecutionMetaData(
-						this.helpers.returnJsonArray(responseData),
-						{ itemData: { item: i } },
-					),
+					...this.helpers.constructExecutionMetaData(this.helpers.returnJsonArray(responseData), {
+						itemData: { item: i },
+					}),
 				);
 			} catch (error) {
 				if (this.continueOnFail()) {
 					returnData.push({
-						json: { error: (error as Error).message },
+						json: { error: error instanceof Error ? error.message : asString(error) },
 						pairedItem: { item: i },
 					});
 					continue;

@@ -1,12 +1,14 @@
-import type {
-	IDataObject,
-	IExecuteFunctions,
-	IHttpRequestMethods,
-	IHttpRequestOptions,
-	ILoadOptionsFunctions,
+import {
+	NodeOperationError,
+	type IDataObject,
+	type IExecuteFunctions,
+	type IHttpRequestMethods,
+	type IHttpRequestOptions,
+	type ILoadOptionsFunctions,
 } from 'n8n-workflow';
 
-import { CREDENTIAL_NAME, NSID } from '../../constants';
+import { CREDENTIAL_NAME, DEFAULT_PDS_SERVER, NSID } from '../../constants';
+import { asArray, asNumber, asObject, asString } from '../../sanitize';
 
 /**
  * Either function context the transport helpers can be bound to: `IExecuteFunctions`
@@ -18,11 +20,22 @@ export type BlueskyContext = IExecuteFunctions | ILoadOptionsFunctions;
 /**
  * The user's Personal Data Server base URL (the `pdsServer` credential field,
  * e.g. `https://bsky.social`), trailing slashes stripped so it can be concatenated
- * with `/xrpc/<nsid>` unconditionally.
+ * with `/xrpc/<nsid>` unconditionally. Rejected when blank rather than left to
+ * produce a relative `"/xrpc/..."` URL and an unrelated-looking request error.
  */
 async function serviceUrl(context: BlueskyContext): Promise<string> {
 	const credentials = await context.getCredentials(CREDENTIAL_NAME);
-	return String(credentials.pdsServer).replace(/\/+$/, '');
+	const url = asString(credentials.pdsServer).trim().replace(/\/+$/, '');
+
+	if (!url) {
+		throw new NodeOperationError(
+			context.getNode(),
+			'No PDS server URL is set on the Bluesky credential',
+			{ description: `Set it to ${DEFAULT_PDS_SERVER} unless the account is hosted elsewhere` },
+		);
+	}
+
+	return url;
 }
 
 /**
@@ -52,11 +65,12 @@ export async function blueskyApiRequest(
 		options.body = body;
 	}
 
-	return (await this.helpers.httpRequestWithAuthentication.call(
-		this,
-		CREDENTIAL_NAME,
-		options,
-	)) as IDataObject;
+	this.logger.error('GOD', {method, nsid, qs, body, thisi: this})
+	// Every XRPC method answers with a JSON object; `asObject` keeps a body that
+	// isn't one (an error page, an empty 200) from being read as if it were.
+	return asObject(
+		await this.helpers.httpRequestWithAuthentication.call(this, CREDENTIAL_NAME, options),
+	);
 }
 
 /**
@@ -78,11 +92,22 @@ export async function uploadBlob(
 		json: false,
 	});
 
-	const parsed = (typeof response === 'string' ? JSON.parse(response) : response) as {
-		blob: IDataObject;
-	};
+	let parsed: IDataObject = {};
+	try {
+		parsed = asObject(typeof response === 'string' ? JSON.parse(response) : response);
+	} catch {
+		// Not JSON at all; handled by the empty-blob check below
+	}
 
-	return parsed.blob;
+	const blob = asObject(parsed.blob);
+	if (!blob.ref) {
+		throw new NodeOperationError(this.getNode(), 'The upload did not return a blob reference', {
+			description:
+				'The PDS accepted the request but its response had no usable `blob`, so there is nothing to attach to the record',
+		});
+	}
+
+	return blob;
 }
 
 /**
@@ -103,9 +128,12 @@ export async function blueskyApiRequestAllItems(
 ): Promise<IDataObject[]> {
 	const items: IDataObject[] = [];
 	let cursor: string | undefined;
+	// A limit that arrived as NaN or 0 (from an expression) would otherwise ask the
+	// API for `limit=NaN` and, worse, make the loop's exit condition never true
+	const target = Math.max(1, Math.floor(asNumber(limit, 50)));
 
 	do {
-		const pageSize = returnAll ? 100 : Math.min(limit - items.length, 100);
+		const pageSize = returnAll ? 100 : Math.min(target - items.length, 100);
 		const response = await blueskyApiRequest.call(
 			this,
 			'GET',
@@ -114,18 +142,32 @@ export async function blueskyApiRequestAllItems(
 			{ ...qs, limit: pageSize, ...(cursor ? { cursor } : {}) },
 		);
 
-		const page = (response[dataKey] ?? []) as IDataObject[];
+		const page = asArray<unknown>(response[dataKey]).map(asObject);
 		items.push(...page);
 
 		// Stop on an empty page too: some feeds keep handing out a cursor forever
-		cursor = page.length ? (response.cursor as string | undefined) : undefined;
-	} while (cursor && (returnAll || items.length < limit));
+		cursor = page.length ? asString(response.cursor) || undefined : undefined;
+	} while (cursor && (returnAll || items.length < target));
 
-	return returnAll ? items : items.slice(0, limit);
+	return returnAll ? items : items.slice(0, target);
 }
 
-/** The DID of the authenticated account, needed as the `repo` for record writes */
+/**
+ * The DID of the authenticated account, needed as the `repo` for record writes.
+ * Validated here rather than at the call sites: an absent `did` would otherwise be
+ * written into every created record as `repo: undefined`.
+ */
 export async function getOwnDid(this: BlueskyContext): Promise<string> {
 	const session = await blueskyApiRequest.call(this, 'GET', NSID.server.getSession);
-	return session.did as string;
+	const did = asString(session.did);
+
+	if (!did.startsWith('did:')) {
+		throw new NodeOperationError(
+			this.getNode(),
+			'Could not determine the DID of the authenticated account',
+			{ description: `${NSID.server.getSession} responded without a valid "did"` },
+		);
+	}
+
+	return did;
 }

@@ -24,7 +24,7 @@
         "dev": "n8n-node dev --external-n8n",
         "lint": "n8n-node lint",
         "lint:fix": "n8n-node lint --fix",
-        "test": "node test/richtext.test.ts",
+        "test": "node test/richtext.test.ts && node test/sanitize.test.ts",
         "release": "n8n-node release",
         "prepublishOnly": "n8n-node prerelease"
     },
