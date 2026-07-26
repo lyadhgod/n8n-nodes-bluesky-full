@@ -1,11 +1,14 @@
 {
     "name": "n8n-nodes-bluesky",
     "version": "0.1.0",
-    "description": "",
+    "description": "n8n community node for the Bluesky API",
     "license": "MIT",
-    "homepage": "",
+    "homepage": "https://github.com/lyadhgod/n8n-nodes-bluesky",
     "keywords": [
-        "n8n-community-node-package"
+        "n8n-community-node-package",
+        "bluesky",
+        "bsky",
+        "atproto"
     ],
     "author": {
         "name": "lyadhgod",
@@ -13,17 +16,18 @@
     },
     "repository": {
         "type": "git",
-        "url": "https://github.com/<...>/n8n-nodes-<...>.git"
+        "url": "https://github.com/lyadhgod/n8n-nodes-bluesky.git"
     },
-   "scripts": {
-		"build": "n8n-node build",
-		"build:watch": "tsc --watch",
-		"dev": "n8n-node dev",
-		"lint": "n8n-node lint",
+    "scripts": {
+        "build": "n8n-node build",
+        "build:watch": "tsc --watch",
+        "dev": "n8n-node dev --external-n8n",
+        "lint": "n8n-node lint",
         "lint:fix": "n8n-node lint --fix",
-		"release": "n8n-node release",
-		"prepublishOnly": "n8n-node prerelease"
-	},
+        "test": "node test/richtext.test.ts",
+        "release": "n8n-node release",
+        "prepublishOnly": "n8n-node prerelease"
+    },
     "files": [
         "dist"
     ],
@@ -31,15 +35,15 @@
         "n8nNodesApiVersion": 1,
         "strict": true,
         "credentials": [
-            "dist/credentials/GithubIssuesApi.credentials.js",
-            "dist/credentials/GithubIssuesOAuth2Api.credentials.js"
+            "dist/credentials/BlueskyApi.credentials.js"
         ],
         "nodes": [
-            "dist/nodes/GithubIssues/GithubIssues.node.js"
+            "dist/nodes/Bluesky/Bluesky.node.js"
         ]
     },
     "devDependencies": {
         "@n8n/node-cli": "*",
+        "@types/node": "^26.1.1",
         "eslint": "9.32.0",
         "prettier": "3.6.2",
         "release-it": "^19.0.4",

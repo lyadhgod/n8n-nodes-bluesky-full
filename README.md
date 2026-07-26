@@ -1,6 +1,6 @@
 # n8n-nodes-bluesky
 
-This is an n8n community node. It lets you use GitHub Issues in your n8n workflows.
+This is an n8n community node. It lets you use the [Bluesky](https://bsky.app) AT Protocol API in your n8n workflows.
 
 [n8n](https://n8n.io/) is a [fair-code licensed](https://docs.n8n.io/sustainable-use-license/) workflow automation platform.
 
@@ -17,57 +17,65 @@ Follow the [installation guide](https://docs.n8n.io/integrations/community-nodes
 
 ## Operations
 
-- Issues
-    - Get an issue
-    - Get many issues in a repository
-    - Create a new issue
-- Issue Comments
-    - Get many issue comments
+- **Post**
+    - Create a post, reply or quote post, with images or a link card
+    - Delete a post
+    - Get a post
+    - Get a post thread
+    - Get the likes of a post
+    - Get the reposts of a post
+    - Like / Unlike a post
+    - Repost / Unrepost a post
+    - Search posts
+- **Feed**
+    - Get the home timeline
+    - Get the feed of an account
+    - Get a custom feed
+- **User**
+    - Get a profile
+    - Search accounts
+    - Get followers / following
+    - Follow / Unfollow
+    - Block / Unblock
+    - Mute / Unmute
+- **Notification**
+    - Get many notifications
+    - Get the unread count
+    - Mark notifications as read
 
 ## Credentials
 
-You can use either access token or OAuth2 to use this node.
+The node authenticates with an **app password**, not your account password.
 
-### Access token
+1. In Bluesky go to **Settings → Privacy and Security → App Passwords** and create one.
+2. In n8n create a **Bluesky API** credential and fill in:
+    - **Service URL** — leave at `https://bsky.social` unless your account lives on another PDS.
+    - **Identifier** — your handle (`alice.bsky.social`), DID or email.
+    - **App Password** — the password generated in step 1.
 
-1. Open your GitHub profile [Settings](https://github.com/settings/profile).
-2. In the left navigation, select [Developer settings](https://github.com/settings/apps).
-3. In the left navigation, under Personal access tokens, select Tokens (classic).
-4. Select Generate new token > Generate new token (classic).
-5. Enter a descriptive name for your token in the Note field, like n8n integration.
-6. Select the Expiration you'd like for the token, or select No expiration.
-7. Select Scopes for your token. For most of the n8n GitHub nodes, add the `repo` scope.
-    - A token without assigned scopes can only access public information.
-8. Select Generate token.
-9. Copy the token.
-
-Refer to [Creating a personal access token (classic)](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens#creating-a-personal-access-token-classic) for more information. Refer to Scopes for OAuth apps for more information on GitHub scopes.
-
-![Generated Access token in GitHub](https://docs.github.com/assets/cb-17251/mw-1440/images/help/settings/personal-access-tokens.webp)
-
-### OAuth2
-
-If you're self-hosting n8n, create a new GitHub [OAuth app](https://docs.github.com/en/apps/oauth-apps):
-
-1. Open your GitHub profile [Settings](https://github.com/settings/profile).
-2. In the left navigation, select [Developer settings](https://github.com/settings/apps).
-3. In the left navigation, select OAuth apps.
-4. Select New OAuth App.
-    - If you haven't created an app before, you may see Register a new application instead. Select it.
-5. Enter an Application name, like n8n integration.
-6. Enter the Homepage URL for your app's website.
-7. If you'd like, add the optional Application description, which GitHub displays to end-users.
-8. From n8n, copy the OAuth Redirect URL and paste it into the GitHub Authorization callback URL.
-9. Select Register application.
-10. Copy the Client ID and Client Secret this generates and add them to your n8n credential.
-
-Refer to the [GitHub Authorizing OAuth apps documentation](https://docs.github.com/en/apps/oauth-apps/using-oauth-apps/authorizing-oauth-apps) for more information on the authorization process.
+The credential exchanges those for a short-lived session token via `com.atproto.server.createSession`. n8n caches the token and transparently re-authenticates when it expires.
 
 ## Compatibility
 
-Compatible with n8n@1.60.0 or later
+Requires n8n 1.x with community nodes enabled. Tested against n8n node API version 1.
+
+## Usage
+
+**Post URIs.** Anywhere the node asks for a post you can paste either an AT URI (`at://did:plc:…/app.bsky.feed.post/3k…`) or the bsky.app link from your browser. The same applies to accounts: a handle, a DID or a `https://bsky.app/profile/…` link all work.
+
+**Rich text.** When creating a post, links, `@mentions` and `#hashtags` in the text are turned into clickable facets automatically. Mentions are resolved to DIDs; an unresolvable handle stays plain text. Turn this off with **Additional Fields → Detect Rich Text**.
+
+**Images.** Attach up to four images from input binary fields. Bluesky rejects blobs over 1 MB, so resize beforehand — the node fails with a clear message rather than a raw API error. Always fill in the alt text.
+
+**Threads.** To post a thread, chain several *Create* operations and feed the `uri` returned by one into **Reply To** of the next. The node resolves the thread root for you.
+
+**Simplify.** Read operations return a flattened shape (uri, text, author, counts, web URL) by default. Switch **Simplify** off to get the raw AT Protocol response.
+
+**Idempotency.** *Unlike*, *Unrepost*, *Unfollow* and *Unblock* do not fail when there is nothing to remove; they return `changed: false`.
 
 ## Resources
 
-* [n8n community nodes documentation](https://docs.n8n.io/integrations/#community-nodes)
-* [GitHub API docs](https://docs.github.com/en/rest/issues)
+- [n8n community nodes documentation](https://docs.n8n.io/integrations/#community-nodes)
+- [Bluesky HTTP API reference](https://docs.bsky.app/docs/category/http-reference)
+- [Bluesky get started (auth)](https://docs.bsky.app/docs/get-started)
+- [Post rich text (facets)](https://docs.bsky.app/docs/advanced-guides/post-richtext)
