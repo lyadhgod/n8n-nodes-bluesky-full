@@ -107,7 +107,9 @@ export const postDescription: INodeProperties[] = [
 		name: 'images',
 		placeholder: 'Add Image',
 		type: 'fixedCollection',
-		typeOptions: { multipleValues: true, maxValue: 4 },
+		// `maxValue` is a number-field option, so the four-image cap of
+		// app.bsky.embed.images can't be expressed here; it's checked at execution time
+		typeOptions: { multipleValues: true },
 		default: {},
 		description: 'Up to four images to attach to the post',
 		displayOptions: showFor(['create']),
