@@ -7,7 +7,7 @@ import {
 	type ILoadOptionsFunctions,
 } from 'n8n-workflow';
 
-import { CREDENTIAL_NAME, DEFAULT_PDS_SERVER, NSID } from '../../constants';
+import { CREDENTIAL_NAME, DEFAULT_PDS_SERVER, NSID, REQUEST_TIMEOUT_MS } from '../../constants';
 import { asArray, asNumber, asObject, asString } from '../../sanitize';
 
 /**
@@ -59,13 +59,13 @@ export async function blueskyApiRequest(
 		// XRPC expects repeated keys for array parameters, e.g. `reasons=like&reasons=reply`
 		arrayFormat: 'repeat',
 		json: true,
+		timeout: REQUEST_TIMEOUT_MS,
 	};
 
 	if (method !== 'GET') {
 		options.body = body;
 	}
 
-	this.logger.error('GOD', {method, nsid, qs, body, thisi: this})
 	// Every XRPC method answers with a JSON object; `asObject` keeps a body that
 	// isn't one (an error page, an empty 200) from being read as if it were.
 	return asObject(
@@ -90,6 +90,7 @@ export async function uploadBlob(
 		body: data,
 		headers: { 'Content-Type': mimeType },
 		json: false,
+		timeout: REQUEST_TIMEOUT_MS,
 	});
 
 	let parsed: IDataObject = {};

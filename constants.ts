@@ -35,6 +35,14 @@ export const BSKY_APP_URL = 'https://bsky.app';
 export const DOCS_URL = 'https://docs.bsky.app/docs/get-started';
 
 /**
+ * Applied to every outgoing request (session login/refresh, XRPC calls, blob
+ * uploads). `IHttpRequestOptions.timeout` is passed straight through to axios,
+ * whose own default is `0` — no timeout, wait forever — so a stalled connection
+ * to the PDS would otherwise hang the request (and the node execution) indefinitely.
+ */
+export const REQUEST_TIMEOUT_MS = 10_000;
+
+/**
  * AT Protocol XRPC method IDs (NSIDs), grouped by namespace to mirror how the
  * protocol itself groups them (`com.atproto.*` core repo/identity/session
  * operations vs. `app.bsky.*` application-layer ones). Each group name matches

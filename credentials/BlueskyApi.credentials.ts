@@ -9,7 +9,7 @@ import type {
 	INodeProperties,
 } from 'n8n-workflow';
 
-import { CREDENTIAL_NAME, DEFAULT_PDS_SERVER, DOCS_URL, NSID } from '../constants';
+import { CREDENTIAL_NAME, DEFAULT_PDS_SERVER, DOCS_URL, NSID, REQUEST_TIMEOUT_MS } from '../constants';
 import { asNumber, asObject, asString } from '../sanitize';
 
 /**
@@ -110,12 +110,14 @@ export class BlueskyApi implements ICredentialType {
 			name: 'accessJwt',
 			type: 'hidden',
 			default: '',
+			typeOptions: { expirable: true }
 		},
 		{
 			displayName: 'Refresh JWT',
 			name: 'refreshJwt',
 			type: 'hidden',
 			default: '',
+			typeOptions: { expirable: true }
 		},
 	];
 
@@ -156,6 +158,7 @@ export class BlueskyApi implements ICredentialType {
 						url: `${pdsServer}/xrpc/${NSID.server.refreshSession}`,
 						headers: { Authorization: `Bearer ${refreshJwt}` },
 						json: true,
+						timeout: REQUEST_TIMEOUT_MS,
 					}),
 					NSID.server.refreshSession,
 				);
@@ -170,6 +173,7 @@ export class BlueskyApi implements ICredentialType {
 				url: `${pdsServer}/xrpc/${NSID.server.createSession}`,
 				body: { identifier, password },
 				json: true,
+				timeout: REQUEST_TIMEOUT_MS,
 			}),
 			NSID.server.createSession,
 		);
@@ -201,6 +205,7 @@ export class BlueskyApi implements ICredentialType {
 				identifier: '={{ (typeof $credentials.identifier === "string" ? $credentials.identifier : "").replace(/\\s+/g, "") }}',
 				password: '={{ (typeof $credentials.password === "string" ? $credentials.password : "").replace(/\\s+/g, "") }}',
 			},
+			timeout: REQUEST_TIMEOUT_MS,
 		},
 	};
 }
