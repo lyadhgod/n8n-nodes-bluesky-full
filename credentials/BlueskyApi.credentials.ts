@@ -97,13 +97,13 @@ export class BlueskyApi implements ICredentialType {
 			description: 'Handle or other identifier supported by the server for the authenticating user',
 		},
 		{
-			displayName: 'Password',
+			displayName: 'App Password',
 			name: 'password',
 			type: 'string',
 			typeOptions: { password: true },
 			default: '',
 			required: true,
-			description: 'Account password',
+			description: 'App password set specifically for this client (Bluesky -> Settings -> Privacy and Security -> App Passwords)',
 		},
 		{
 			displayName: 'Access JWT',

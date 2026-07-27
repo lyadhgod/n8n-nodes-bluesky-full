@@ -49,11 +49,11 @@ The node authenticates with an **app password**, not your account password.
 
 1. In Bluesky go to **Settings → Privacy and Security → App Passwords** and create one.
 2. In n8n create a **Bluesky API** credential and fill in:
-    - **Service URL** — leave at `https://bsky.social` unless your account lives on another PDS.
+    - **PDS Server URL** — leave at `https://bsky.social` unless your account lives on another PDS.
     - **Identifier** — your handle (`alice.bsky.social`), DID or email.
     - **App Password** — the password generated in step 1.
 
-The credential exchanges those for a short-lived session token via `com.atproto.server.createSession`. n8n caches the token and transparently re-authenticates when it expires.
+The credential exchanges those for a short-lived session token via `com.atproto.server.createSession`. The token will be cached and transparently re-authenticates when it expires until permitted by atproto.
 
 ## Compatibility
 
