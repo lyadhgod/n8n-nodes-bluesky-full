@@ -1,5 +1,5 @@
 {
-	"node": "n8n-nodes-bluesky.bluesky",
+	"node": "n8n-nodes-bluesky-full.bluesky",
 	"nodeVersion": "1.0",
 	"codexVersion": "1.0",
 	"categories": ["Communication", "Marketing"],

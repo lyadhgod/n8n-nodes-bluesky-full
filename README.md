@@ -1,4 +1,4 @@
-# n8n-nodes-bluesky
+# n8n-nodes-bluesky-full
 
 This is an n8n community node. It lets you use the [Bluesky](https://bsky.app) AT Protocol API in your n8n workflows.
 

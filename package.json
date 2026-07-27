@@ -1,9 +1,9 @@
 {
-    "name": "n8n-nodes-bluesky",
+    "name": "n8n-nodes-bluesky-full",
     "version": "0.1.0",
     "description": "n8n community node for the Bluesky API",
     "license": "MIT",
-    "homepage": "https://github.com/lyadhgod/n8n-nodes-bluesky",
+    "homepage": "https://github.com/lyadhgod/n8n-nodes-bluesky-full",
     "keywords": [
         "n8n-community-node-package",
         "bluesky",
@@ -16,7 +16,7 @@
     },
     "repository": {
         "type": "git",
-        "url": "https://github.com/lyadhgod/n8n-nodes-bluesky.git"
+        "url": "https://github.com/lyadhgod/n8n-nodes-bluesky-full.git"
     },
     "scripts": {
         "build": "n8n-node build",

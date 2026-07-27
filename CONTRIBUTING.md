@@ -1,4 +1,4 @@
-# Contributing to n8n-nodes-bluesky
+# Contributing to n8n-nodes-bluesky-full
 
 Thanks for taking the time to contribute! This document covers how to set up
 a development environment and the branching/release rules for this repo.

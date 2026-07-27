@@ -1,19 +1,10 @@
-# Publishes this n8n community node package to npm on every version tag push.
+# Publishes this n8n community node package to npm whenever the "version"
+# field in package.json changes on the main branch.
 #
 # Starting May 1 2026, n8n requires all community nodes to be published via
 # GitHub Actions with npm provenance statements. This workflow satisfies that
 # requirement. Provenance lets anyone cryptographically verify that a package
 # was built by this exact workflow, from this exact repository and commit.
-#
-# ─── PREREQUISITES ─────────────────────────────────────────────────────────────
-#
-# @n8n/node-cli ≥ 0.23.0 is required. Earlier versions do not support the
-# provenance flag passed by `npm run release` in CI, and the publish step will
-# fail. Check the version installed in this project with:
-#
-#   npm list @n8n/node-cli
-#
-# To upgrade, add @n8n/node-cli@latest as a dev dependency using your package manager.
 #
 # ─── ONE-TIME SETUP ────────────────────────────────────────────────────────────
 #
@@ -37,29 +28,29 @@
 # Both options work with --provenance. Provenance is signed by GitHub's OIDC
 # infrastructure regardless of how npm authentication is handled.
 #
-# ─── TAG CONVENTION ────────────────────────────────────────────────────────────
-#
-# This workflow triggers on tags matching "*.*.*" (e.g. 0.2.0).
-# If you prefer tags with a "v" prefix (e.g. v0.2.0), change the filter to:
-#   tags: ['v*.*.*']
-#
 # ─── RELEASE PROCESS ───────────────────────────────────────────────────────────
 #
-# Run the following command locally to start an interactive release:
-#
-#   npm run release
-#
-# This will lint, build, prompt for a version bump, update the changelog,
-# commit, tag, and push — which triggers this workflow to publish to npm.
+# 1. Bump "version" in package.json (by hand, or with `npm version <bump>`)
+#    and update CHANGELOG.md, then commit and push straight to main (or merge
+#    a PR that does so).
+# 2. This workflow runs on that push, notices the version field changed, and:
+#      a. tags the commit "v<version>" and pushes the tag
+#      b. builds the project
+#      c. publishes the build to npm with provenance
+# If package.json changes but the version field doesn't, the workflow exits
+# early without tagging or publishing anything.
 
 name: Publish
 
 on:
   push:
-    tags:
-      # Matches 0.1.0, 1.2.3, 2.0.0-rc.1, etc.
-      # See "TAG CONVENTION" above if you prefer tags with a "v" prefix.
-      - '*.*.*'
+    branches:
+      - main
+    # Only even consider running when package.json changed — cheap early
+    # filter. The version-diff check below still guards against unrelated
+    # package.json edits (e.g. a script or dependency change).
+    paths:
+      - package.json
 
 jobs:
   publish:
@@ -69,31 +60,74 @@ jobs:
     permissions:
       # Required to mint an OIDC token for npm provenance attestation.
       id-token: write
-      # Scoped down from the default (write) for least-privilege publishing.
-      contents: read
+      # Needed to push the new "v<version>" tag created below.
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so we can read package.json as it was *before* this
+          # push (github.event.before) and diff its version against HEAD.
+          fetch-depth: 0
+
+      - name: Check whether the version changed
+        id: version-check
+        run: |
+          # github.event.before is the commit SHA the branch pointed to
+          # before this push — the correct "previous state" even if the push
+          # contained multiple commits. On the very first push to a new
+          # branch it's all zeros, in which case there's nothing to diff
+          # against and we treat this as a version change (first release).
+          before='${{ github.event.before }}'
+          if [ "$before" = "0000000000000000000000000000000000000000" ]; then
+            previous=""
+          else
+            previous=$(git show "$before:package.json" 2>/dev/null | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version' 2>/dev/null || echo "")
+          fi
+
+          current=$(node -p "require('./package.json').version")
+          echo "Previous version: ${previous:-<none>}"
+          echo "Current version:  $current"
+
+          if [ "$previous" = "$current" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "version=$current" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Everything below only runs when the version actually changed.
+
+      - name: Create and push tag
+        if: steps.version-check.outputs.changed == 'true'
+        run: |
+          tag="v${{ steps.version-check.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$tag"
+          git push origin "$tag"
 
       - name: Set up Node.js
+        if: steps.version-check.outputs.changed == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: 'lts/*'
           cache: 'npm'
 
       - name: Install dependencies
-        run: 'npm ci'
+        if: steps.version-check.outputs.changed == 'true'
+        run: npm ci
 
-      - name: Release
-        # Publishes to npm with a provenance attestation (requires id-token: write above).
-        # Lint and build run automatically as part of the release process.
-        #
-        # Option A (OIDC): leave NPM_TOKEN unset — the token step is skipped and
-        #   npm uses the OIDC exchange instead.
-        # Option B (token): set NPM_TOKEN in repo secrets — it is written to
-        #   .npmrc here before publishing.
+      - name: Build
+        if: steps.version-check.outputs.changed == 'true'
+        run: npm run build
+
+      - name: Publish to npm
+        if: steps.version-check.outputs.changed == 'true'
+        # Requires id-token: write above. NPM_TOKEN unset → OIDC is used
+        # instead (see "ONE-TIME SETUP" at the top of this file).
         run: |
           [ -n "$NPM_TOKEN" ] && npm config set //registry.npmjs.org/:_authToken "$NPM_TOKEN"
-          npm run release
+          npm publish --provenance
         env:
-          NPM_TOKEN: $
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
