@@ -22,6 +22,8 @@
         "build": "n8n-node build",
         "build:watch": "tsc --watch",
         "dev": "n8n-node dev --external-n8n",
+        "dev:proxy": "mitmproxy --listen-port 9090",
+        "dev:n8n": "NODE_EXTRA_CA_CERTS=~/.mitmproxy/mitmproxy-ca-cert.pem HTTP_PROXY=http://127.0.0.1:9090 HTTPS_PROXY=http://127.0.0.1:9090 N8N_PORT=5678 n8n",
         "lint": "n8n-node lint",
         "lint:fix": "n8n-node lint --fix",
         "test": "node test/richtext.test.ts && node test/sanitize.test.ts",
