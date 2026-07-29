@@ -1,16 +1,8 @@
 // Self-check for the facet detector. Run with `npm test`; silence means success.
-// Deliberately free of imports, `console` and `process`: the n8n community-node
-// lint rules apply to every file in the package, test files included.
+// Deliberately free of `console` and `process`: the n8n community-node lint
+// rules apply to every file in the package, test files included.
 import { detectFacets, toFacet } from '../nodes/Bluesky/richtext.ts';
-
-function check(label: string, actual: unknown, expected: unknown): void {
-	const got = JSON.stringify(actual);
-	const want = JSON.stringify(expected);
-
-	if (got !== want) {
-		throw new Error(`${label}\n  expected: ${want}\n  actual:   ${got}`);
-	}
-}
+import { check } from './check.ts';
 
 check(
 	'detects mentions, links and tags in text order',

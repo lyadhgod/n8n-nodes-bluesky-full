@@ -98,15 +98,6 @@ jobs:
 
       # Everything below only runs when the version actually changed.
 
-      - name: Create and push tag
-        if: steps.version-check.outputs.changed == 'true'
-        run: |
-          tag="v${{ steps.version-check.outputs.version }}"
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "$tag"
-          git push origin "$tag"
-
       - name: Set up Node.js
         if: steps.version-check.outputs.changed == 'true'
         uses: actions/setup-node@v4
@@ -121,6 +112,21 @@ jobs:
       - name: Build
         if: steps.version-check.outputs.changed == 'true'
         run: npm run build
+
+      # Nothing is published if this fails: the job stops at the first failing
+      # step, and the tag pushed above is the only thing already done.
+      - name: Test
+        if: steps.version-check.outputs.changed == 'true'
+        run: npm test
+        
+      - name: Create and push tag
+        if: steps.version-check.outputs.changed == 'true'
+        run: |
+          tag="v${{ steps.version-check.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$tag"
+          git push origin "$tag"
 
       - name: Publish to npm
         if: steps.version-check.outputs.changed == 'true'

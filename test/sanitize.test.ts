@@ -2,15 +2,7 @@
 // Same constraints as richtext.test.ts: no `console`, no `process`, since the
 // n8n community-node lint rules apply to test files too.
 import { asBoolean, asNumber, asObject, asString, asStringArray, splitList } from '../sanitize.ts';
-
-function check(label: string, actual: unknown, expected: unknown): void {
-	const got = JSON.stringify(actual);
-	const want = JSON.stringify(expected);
-
-	if (got !== want) {
-		throw new Error(`${label}\n  expected: ${want}\n  actual:   ${got}`);
-	}
-}
+import { check } from './check.ts';
 
 // The bug this module exists to prevent: `String(undefined)` is `"undefined"`,
 // a seven-character string that passes every truthiness check downstream
