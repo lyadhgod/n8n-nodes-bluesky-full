@@ -54,15 +54,21 @@ jobs:
   publish:
     name: Publish to npm
     runs-on: ubuntu-latest
+    environment:
+      name: production
+      # Lets GitHub show a "View deployment" link (Environments tab, commit
+      # status, deployments list) that points straight at the published
+      # package on npmjs.com. Update if the npm package name ever changes.
+      url: https://www.npmjs.com/package/n8n-nodes-bluesky-full
 
     permissions:
       # Required to mint an OIDC token for npm provenance attestation.
       id-token: write
-      # Needed to push the new "v<version>" tag created below.
+      # create tags + GitHub releases
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history so we can read package.json as it was *before* this
           # push (github.event.before) and diff its version against HEAD.
@@ -98,12 +104,10 @@ jobs:
 
       - name: Set up Node.js
         if: steps.version-check.outputs.changed == 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          # OIDC Trusted Publishing needs npm >= 11.5.1; 'lts/*' bundles a
-          # new enough npm as of Node 22.
-          node-version: 'lts/*'
-          cache: 'npm'
+          node-version: '24'
+          package-manager-cache: false  # never use caching in release builds
 
       - name: Install dependencies
         if: steps.version-check.outputs.changed == 'true'
