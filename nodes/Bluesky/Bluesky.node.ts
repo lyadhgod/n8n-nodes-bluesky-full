@@ -137,25 +137,6 @@ async function uploadBinaryImage(
 	return await uploadBlob.call(this, buffer, binary.mimeType || 'application/octet-stream');
 }
 
-/**
- * A `resource`/`operation` pair the node has no handler for. Reachable when a
- * workflow was built against a newer version of this node, or hand-edited: the
- * dispatchers used to fall through to an empty object, which looked like a
- * successful run that quietly did nothing.
- */
-function unknownOperation(
-	context: IExecuteFunctions,
-	resource: string,
-	operation: string,
-	itemIndex: number,
-): NodeOperationError {
-	return new NodeOperationError(
-		context.getNode(),
-		`The operation "${operation}" is not supported for the ${resource} resource`,
-		{ itemIndex },
-	);
-}
-
 /** Delete a record referenced by an AT URI, e.g. the like the viewer left on a post */
 async function deleteRecordByUri(
 	this: IExecuteFunctions,
@@ -455,7 +436,11 @@ async function executePostOperation(
 		case 'getReposts':
 			return getPostReposts.call(this, itemIndex);
 		default:
-			throw unknownOperation(this, 'post', operation, itemIndex);
+			throw new NodeOperationError(
+				this.getNode(),
+				`The operation "${operation}" is not supported for the post resource`,
+				{ itemIndex },
+			);
 	}
 }
 
@@ -507,7 +492,11 @@ async function executeFeedOperation(
 		case 'getTimeline':
 			return getTimelineOp.call(this, itemIndex);
 		default:
-			throw unknownOperation(this, 'feed', operation, itemIndex);
+			throw new NodeOperationError(
+				this.getNode(),
+				`The operation "${operation}" is not supported for the feed resource`,
+				{ itemIndex },
+			);
 	}
 }
 
@@ -625,7 +614,11 @@ async function executeUserOperation(
 		case 'unmute':
 			return muteOrUnmute.call(this, operation, itemIndex);
 		default:
-			throw unknownOperation(this, 'user', operation, itemIndex);
+			throw new NodeOperationError(
+				this.getNode(),
+				`The operation "${operation}" is not supported for the user resource`,
+				{ itemIndex },
+			);
 	}
 }
 
@@ -716,7 +709,11 @@ async function executeNotificationOperation(
 		case 'markRead':
 			return markNotificationsRead.call(this, itemIndex);
 		default:
-			throw unknownOperation(this, 'notification', operation, itemIndex);
+			throw new NodeOperationError(
+				this.getNode(),
+				`The operation "${operation}" is not supported for the notification resource`,
+				{ itemIndex },
+			);
 	}
 }
 
