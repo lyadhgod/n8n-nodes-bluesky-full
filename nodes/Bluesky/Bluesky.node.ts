@@ -1,14 +1,12 @@
 import {
 	NodeApiError,
 	NodeConnectionTypes,
-	NodeError,
 	NodeOperationError,
 	type IDataObject,
 	type IExecuteFunctions,
 	type INodeExecutionData,
 	type INodeType,
 	type INodeTypeDescription,
-	type JsonObject,
 } from 'n8n-workflow';
 
 import { CREDENTIAL_NAME, NODE_DISPLAY_NAME, NODE_NAME, NSID } from '../../constants';
@@ -830,9 +828,12 @@ export class Bluesky implements INodeType {
 				// of ours in NodeApiError swaps its message and description for a generic
 				// "service was not able to process your request", losing the actual cause.
 				// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
-				throw (error instanceof NodeError)
-					? error
-					: new NodeApiError(this.getNode(), error as JsonObject, { itemIndex: i });
+				throw (error instanceof NodeApiError)
+				    ? new NodeApiError(
+						this.getNode(),
+						error.errorResponse ?? { message: error.message },
+						{ itemIndex: i }
+					) : new NodeOperationError(this.getNode(), error, { itemIndex: i });
 			}
 		}
 
