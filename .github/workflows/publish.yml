@@ -30,9 +30,11 @@
 #    and update CHANGELOG.md, then commit and push straight to main (or merge
 #    a PR that does so).
 # 2. This workflow runs on that push, notices the version field changed, and:
-#      a. tags the commit "v<version>" and pushes the tag
-#      b. builds the project
-#      c. publishes the build to npm with provenance
+#      a. builds and tests the project
+#      b. tags the commit "v<version>" and pushes the tag
+#      c. creates a GitHub release, with notes taken from the matching
+#         "## <version>" section of CHANGELOG.md
+#      d. publishes the build to npm with provenance
 # If package.json changes but the version field doesn't, the workflow exits
 # early without tagging or publishing anything.
 
@@ -125,6 +127,35 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "$tag"
           git push origin "$tag"
+
+      - name: Build release notes
+        id: notes
+        if: steps.version-check.outputs.changed == 'true'
+        run: |
+          # Pull the "## <version>" section out of CHANGELOG.md, stopping at
+          # the next "## " heading. Empty output means no matching section —
+          # the release step then falls back to auto-generated notes.
+          version='${{ steps.version-check.outputs.version }}'
+          notes=$(awk -v v="## $version" '$0 == v {found=1; next} found && /^## / {exit} found' CHANGELOG.md)
+          {
+            echo "notes<<CHANGELOG_EOF"
+            echo "$notes"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release
+        if: steps.version-check.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NOTES: ${{ steps.notes.outputs.notes }}
+        run: |
+          tag="v${{ steps.version-check.outputs.version }}"
+          if [ -n "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ]; then
+            printf '%s\n' "$NOTES" > release-notes.md
+            gh release create "$tag" --title "$tag" --notes-file release-notes.md
+          else
+            gh release create "$tag" --title "$tag" --generate-notes
+          fi
 
       - name: Publish to npm
         if: steps.version-check.outputs.changed == 'true'
