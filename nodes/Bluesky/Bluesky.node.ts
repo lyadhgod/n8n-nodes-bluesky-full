@@ -137,6 +137,25 @@ async function uploadBinaryImage(
 	return await uploadBlob.call(this, buffer, binary.mimeType || 'application/octet-stream');
 }
 
+/**
+ * A `resource`/`operation` pair the node has no handler for. Reachable when a
+ * workflow was built against a newer version of this node, or hand-edited: the
+ * dispatchers used to fall through to an empty object, which looked like a
+ * successful run that quietly did nothing.
+ */
+function unknownOperation(
+	context: IExecuteFunctions,
+	resource: string,
+	operation: string,
+	itemIndex: number,
+): NodeOperationError {
+	return new NodeOperationError(
+		context.getNode(),
+		`The operation "${operation}" is not supported for the ${resource} resource`,
+		{ itemIndex },
+	);
+}
+
 /** Delete a record referenced by an AT URI, e.g. the like the viewer left on a post */
 async function deleteRecordByUri(
 	this: IExecuteFunctions,
@@ -436,11 +455,7 @@ async function executePostOperation(
 		case 'getReposts':
 			return getPostReposts.call(this, itemIndex);
 		default:
-			throw new NodeOperationError(
-				this.getNode(),
-				`The operation "${operation}" is not supported for the post resource`,
-				{ itemIndex },
-			);
+			throw unknownOperation(this, 'post', operation, itemIndex);
 	}
 }
 
@@ -492,11 +507,7 @@ async function executeFeedOperation(
 		case 'getTimeline':
 			return getTimelineOp.call(this, itemIndex);
 		default:
-			throw new NodeOperationError(
-				this.getNode(),
-				`The operation "${operation}" is not supported for the feed resource`,
-				{ itemIndex },
-			);
+			throw unknownOperation(this, 'feed', operation, itemIndex);
 	}
 }
 
@@ -614,11 +625,7 @@ async function executeUserOperation(
 		case 'unmute':
 			return muteOrUnmute.call(this, operation, itemIndex);
 		default:
-			throw new NodeOperationError(
-				this.getNode(),
-				`The operation "${operation}" is not supported for the user resource`,
-				{ itemIndex },
-			);
+			throw unknownOperation(this, 'user', operation, itemIndex);
 	}
 }
 
@@ -709,11 +716,7 @@ async function executeNotificationOperation(
 		case 'markRead':
 			return markNotificationsRead.call(this, itemIndex);
 		default:
-			throw new NodeOperationError(
-				this.getNode(),
-				`The operation "${operation}" is not supported for the notification resource`,
-				{ itemIndex },
-			);
+			throw unknownOperation(this, 'notification', operation, itemIndex);
 	}
 }
 
@@ -816,7 +819,7 @@ export class Bluesky implements INodeType {
 			} catch (error) {
 				if (this.continueOnFail()) {
 					returnData.push({
-						json: { error: String(error) },
+						json: { error: error instanceof Error ? error.message : asString(error) },
 						pairedItem: { item: i },
 					});
 					continue;
@@ -827,9 +830,9 @@ export class Bluesky implements INodeType {
 				// of ours in NodeApiError swaps its message and description for a generic
 				// "service was not able to process your request", losing the actual cause.
 				// eslint-disable-next-line @n8n/community-nodes/require-node-api-error
-				if (error instanceof NodeError) throw error;
-
-				throw new NodeApiError(this.getNode(), error as JsonObject, { itemIndex: i });
+				throw (error instanceof NodeError)
+					? error
+					: new NodeApiError(this.getNode(), error as JsonObject, { itemIndex: i });
 			}
 		}
 
