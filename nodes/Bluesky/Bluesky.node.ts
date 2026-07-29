@@ -819,7 +819,7 @@ export class Bluesky implements INodeType {
 			} catch (error) {
 				if (this.continueOnFail()) {
 					returnData.push({
-						json: { error: error instanceof Error ? error.message : asString(error) },
+						json: { error: String(error) },
 						pairedItem: { item: i },
 					});
 					continue;
