@@ -122,6 +122,13 @@ jobs:
       - name: Test
         if: steps.version-check.outputs.changed == 'true'
         run: npm test
+
+      - name: Publish to npm
+        if: steps.version-check.outputs.changed == 'true'
+        # Requires id-token: write above and a Trusted Publisher configured
+        # on npmjs.com (see "ONE-TIME SETUP" at the top of this file). No
+        # NPM_TOKEN is read — OIDC is the only supported auth path.
+        run: npm publish --provenance
         
       - name: Create and push tag
         if: steps.version-check.outputs.changed == 'true'
@@ -160,10 +167,3 @@ jobs:
           else
             gh release create "$tag" --title "$tag" --generate-notes
           fi
-
-      - name: Publish to npm
-        if: steps.version-check.outputs.changed == 'true'
-        # Requires id-token: write above and a Trusted Publisher configured
-        # on npmjs.com (see "ONE-TIME SETUP" at the top of this file). No
-        # NPM_TOKEN is read — OIDC is the only supported auth path.
-        run: npm publish --provenance
