@@ -1,5 +1,10 @@
 # n8n-nodes-bluesky-full
 
+[![github release](https://img.shields.io/github/v/release/lyadhgod/n8n-nodes-bluesky-full?label=github&color=6e5494)](https://github.com/lyadhgod/n8n-nodes-bluesky-full/releases)
+[![npm version](https://img.shields.io/npm/v/n8n-nodes-bluesky-full.svg)](https://www.npmjs.com/package/n8n-nodes-bluesky-full)
+[![license](https://img.shields.io/npm/l/n8n-nodes-bluesky-full.svg)](https://github.com/lyadhgod/n8n-nodes-bluesky-full/blob/main/LICENSE.md)
+
+
 This is an n8n community node. It lets you use the [Bluesky](https://bsky.app) AT Protocol API in your n8n workflows.
 
 [n8n](https://n8n.io/) is a [fair-code licensed](https://docs.n8n.io/sustainable-use-license/) workflow automation platform.
@@ -75,6 +80,7 @@ Requires n8n 1.x with community nodes enabled. Tested against n8n node API versi
 
 ## Resources
 
+- [npm package](https://www.npmjs.com/package/n8n-nodes-bluesky-full)
 - [n8n community nodes documentation](https://docs.n8n.io/integrations/#community-nodes)
 - [Bluesky HTTP API reference](https://docs.bsky.app/docs/category/http-reference)
 - [Bluesky get started (auth)](https://docs.bsky.app/docs/get-started)

@@ -51,22 +51,12 @@ on:
       - package.json
 
 jobs:
-  publish:
-    name: Publish to npm
+  version-check:
+    name: Check whether the version changed
     runs-on: ubuntu-latest
-    environment:
-      name: production
-      # Lets GitHub show a "View deployment" link (Environments tab, commit
-      # status, deployments list) that points straight at the published
-      # package on npmjs.com. Update if the npm package name ever changes.
-      url: https://www.npmjs.com/package/n8n-nodes-bluesky-full
-
-    permissions:
-      # Required to mint an OIDC token for npm provenance attestation.
-      id-token: write
-      # create tags + GitHub releases
-      contents: write
-
+    outputs:
+      changed: ${{ steps.version-check.outputs.changed }}
+      version: ${{ steps.version-check.outputs.version }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -100,40 +90,53 @@ jobs:
             echo "version=$current" >> "$GITHUB_OUTPUT"
           fi
 
-      # Everything below only runs when the version actually changed.
+  publish:
+    name: Publish to npm
+    needs: version-check
+    if: needs.version-check.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      # Lets GitHub show a "View deployment" link (Environments tab, commit
+      # status, deployments list) that points straight at the published
+      # version on npmjs.com. Update the package name here if it ever changes.
+      url: https://www.npmjs.com/package/n8n-nodes-bluesky-full/v/${{ needs.version-check.outputs.version }}
+
+    permissions:
+      # Required to mint an OIDC token for npm provenance attestation.
+      id-token: write
+      # create tags + GitHub releases
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
 
       - name: Set up Node.js
-        if: steps.version-check.outputs.changed == 'true'
         uses: actions/setup-node@v7
         with:
           node-version: '24'
           package-manager-cache: false  # never use caching in release builds
 
       - name: Install dependencies
-        if: steps.version-check.outputs.changed == 'true'
         run: npm ci
 
       - name: Build
-        if: steps.version-check.outputs.changed == 'true'
         run: npm run build
 
       # Nothing is published if this fails: the job stops at the first failing
       # step, and the tag pushed above is the only thing already done.
       - name: Test
-        if: steps.version-check.outputs.changed == 'true'
         run: npm test
 
       - name: Publish to npm
-        if: steps.version-check.outputs.changed == 'true'
         # Requires id-token: write above and a Trusted Publisher configured
         # on npmjs.com (see "ONE-TIME SETUP" at the top of this file). No
         # NPM_TOKEN is read — OIDC is the only supported auth path.
         run: npm run release
-        
+
       - name: Create and push tag
-        if: steps.version-check.outputs.changed == 'true'
         run: |
-          tag="v${{ steps.version-check.outputs.version }}"
+          tag="v${{ needs.version-check.outputs.version }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "$tag"
@@ -141,12 +144,11 @@ jobs:
 
       - name: Build release notes
         id: notes
-        if: steps.version-check.outputs.changed == 'true'
         run: |
           # Pull the "## <version>" section out of CHANGELOG.md, stopping at
           # the next "## " heading. Empty output means no matching section —
           # the release step then falls back to auto-generated notes.
-          version='${{ steps.version-check.outputs.version }}'
+          version='${{ needs.version-check.outputs.version }}'
           notes=$(awk -v v="## $version" '$0 == v {found=1; next} found && /^## / {exit} found' CHANGELOG.md)
           {
             echo "notes<<CHANGELOG_EOF"
@@ -155,15 +157,22 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub release
-        if: steps.version-check.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           NOTES: ${{ steps.notes.outputs.notes }}
         run: |
-          tag="v${{ steps.version-check.outputs.version }}"
+          tag="v${{ needs.version-check.outputs.version }}"
+          pkg_name=$(node -p "require('./package.json').name")
+          npm_line="npm package: https://www.npmjs.com/package/$pkg_name/v/${{ needs.version-check.outputs.version }}"
+
           if [ -n "$(printf '%s' "$NOTES" | tr -d '[:space:]')" ]; then
-            printf '%s\n' "$NOTES" > release-notes.md
+            { printf '%s\n\n' "$npm_line"; printf '%s\n' "$NOTES"; } > release-notes.md
             gh release create "$tag" --title "$tag" --notes-file release-notes.md
           else
+            # --generate-notes builds its notes server-side, so there's nothing
+            # to prepend to yet — create the release first, then edit it in to
+            # the auto-generated body.
             gh release create "$tag" --title "$tag" --generate-notes
+            { printf '%s\n\n' "$npm_line"; gh release view "$tag" --json body -q .body; } > release-notes.md
+            gh release edit "$tag" --notes-file release-notes.md
           fi
