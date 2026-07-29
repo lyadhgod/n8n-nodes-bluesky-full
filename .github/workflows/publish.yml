@@ -128,7 +128,7 @@ jobs:
         # Requires id-token: write above and a Trusted Publisher configured
         # on npmjs.com (see "ONE-TIME SETUP" at the top of this file). No
         # NPM_TOKEN is read — OIDC is the only supported auth path.
-        run: npm publish --provenance
+        run: npm run release
         
       - name: Create and push tag
         if: steps.version-check.outputs.changed == 'true'
