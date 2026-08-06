@@ -1,6 +1,6 @@
 {
     "name": "n8n-nodes-bluesky-full",
-    "version": "0.1.9",
+    "version": "0.1.10",
     "description": "n8n community node for the Bluesky API",
     "license": "MIT",
     "homepage": "https://github.com/lyadhgod/n8n-nodes-bluesky-full",
